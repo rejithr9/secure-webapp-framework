@@ -155,13 +155,23 @@ def test_public_config_hides_versions(client) -> None:
 def test_audit_tables_are_append_only_in_postgres(alice, db) -> None:
     from sqlalchemy.exc import DBAPIError
 
+    from swf.models import AdminEvent
+    from swf.services import audit
+
+    audit.record_admin(db, "settings_changed", actor=None, details={"example": True})
+    db.commit()
+
     with pytest.raises(DBAPIError):
         db.execute(text("UPDATE audit_events SET event_type = 'forged'"))
+    db.rollback()
+    with pytest.raises(DBAPIError):
+        db.execute(text("UPDATE admin_events SET action = 'forged'"))
     db.rollback()
     with pytest.raises(DBAPIError):
         db.execute(text("DELETE FROM admin_events"))
     db.rollback()
     assert db.scalar(select(func.count()).select_from(AuditEvent)) > 0
+    assert db.scalar(select(func.count()).select_from(AdminEvent)) == 1
 
 
 def test_new_client_helper_is_same_origin(engine) -> None:
