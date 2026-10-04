@@ -40,6 +40,11 @@ def main(
     make.add_argument("-m", "--message", required=True)
     create = sub.add_parser("create-admin", help="create an admin account")
     create.add_argument("username")
+    create.add_argument(
+        "--allow-non-interactive",
+        action="store_true",
+        help="print the one-time password even when the output is not a terminal (it may end up in logs)",
+    )
     sub.add_parser("purge-retention", help="delete data of users past the retention period")
     args = parser.parse_args(argv)
 
@@ -67,11 +72,21 @@ def main(
     from swf.services import audit, users
 
     if args.command == "create-admin":
+        # The one-time password is shown once, to the person at the terminal. Refuse when the
+        # output goes somewhere else (a file, a pipe, a log collector) unless explicitly allowed.
+        if not sys.stdout.isatty() and not args.allow_non_interactive:
+            print(
+                "Run this in an interactive terminal, so the one-time password isn't written to a log. "
+                "(Use --allow-non-interactive to override.)",
+                file=sys.stderr,
+            )
+            return 2
         with session_factory()() as db:
             user, initial_password = users.create_user(db, args.username, "admin")
             audit.record_admin(db, "user_created", actor=None, target=user, details={"role": "admin", "via": "cli"})
             db.commit()
         print(f"Admin '{user.username}' created.")
+        # Intentional, one-time display to the operator's terminal (see the check above); never logged.
         print(f"One-time password (shown once, change it at first sign-in): {initial_password}")
         return 0
 
