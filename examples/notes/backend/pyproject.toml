@@ -1,0 +1,42 @@
+[project]
+name = "notes-app"
+version = "0.1.0"
+description = "Example app built on the Secure Web App Framework"
+requires-python = ">=3.12"
+# In your own app, pin the framework release instead, for example:
+#   "secure-webapp-framework @ https://github.com/rejithr9/secure-webapp-framework/releases/download/v0.1.0/secure_webapp_framework-0.1.0-py3-none-any.whl"
+dependencies = ["secure-webapp-framework"]
+
+[project.optional-dependencies]
+dev = ["secure-webapp-framework[testing]"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["notes_app*"]
+
+[tool.setuptools.package-data]
+notes_app = ["terms.md", "migrations/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "UP"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["notes_app"]
+known-third-party = ["swf"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"notes_app/migrations/**" = ["E501"]

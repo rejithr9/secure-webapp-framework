@@ -1,0 +1,78 @@
+# Production stack: PostgreSQL, the app's back end, and Caddy serving the front end over HTTPS.
+# Run from this folder:  docker compose up -d --build
+# Settings come from deploy/.env (copy .env.example; never commit .env).
+# As shipped, it deploys the example Notes app; change APP_DIR, APP_PACKAGE and FRONTEND_DIR for yours.
+name: ${COMPOSE_PROJECT:-swf-app}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+      args:
+        APP_DIR: ${APP_DIR:-examples/notes/backend}
+        APP_PACKAGE: ${APP_PACKAGE:-notes_app}
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DOCS_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD}@db:5432/app
+      MASTER_KEY: ${MASTER_KEY:?Set MASTER_KEY in deploy/.env}
+      ALLOWED_HOSTS: ${APP_DOMAIN}
+      COOKIE_SECURE: "true"
+      WEBAUTHN_RP_ID: ${APP_DOMAIN}
+      WEBAUTHN_ORIGIN: https://${APP_DOMAIN}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-12}
+      LOCKOUT_THRESHOLD: ${LOCKOUT_THRESHOLD:-5}
+      LOCKOUT_MINUTES: ${LOCKOUT_MINUTES:-15}
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+    # No published ports: only Caddy can reach the back end.
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+      args:
+        FRONTEND_DIR: ${FRONTEND_DIR:-examples/notes/frontend}
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [backend]
+    networks: [internal]
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:

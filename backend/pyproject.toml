@@ -1,0 +1,76 @@
+[project]
+name = "secure-webapp-framework"
+dynamic = ["version"]
+description = "A reusable, security-first framework for multi-user web apps (FastAPI back end)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Rejith Radhakrishnan" }]
+classifiers = [
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.4",
+    "argon2-cffi>=23.1",
+    "pyotp>=2.9",
+    "segno>=1.6",
+    "cryptography>=43",
+    "webauthn>=2.2",
+]
+
+[project.optional-dependencies]
+# Test helpers in swf.testing (used by apps' own test suites too).
+testing = ["pytest>=8.3", "httpx>=0.27", "cbor2>=5.6"]
+dev = [
+    "secure-webapp-framework[testing]",
+    "ruff>=0.6",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/rejithr9/secure-webapp-framework"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "swf.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["swf*"]
+
+[tool.setuptools.package-data]
+swf = ["migrations/script.py.mako", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F/W: errors; I: imports; B: bugbear; S: flake8-bandit (security); UP: modern syntax.
+select = ["E", "F", "W", "I", "B", "S", "UP"]
+ignore = ["B008"]  # FastAPI's Depends()/Query() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+"swf/testing.py" = ["S101", "S105", "S106"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]

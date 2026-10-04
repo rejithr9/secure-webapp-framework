@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1" # weekly, so new vulnerabilities in dependencies are noticed
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Back end (Python ${{ matrix.python }}, SQLite)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "backend[dev]" -e examples/notes/backend
+      - name: Lint (ruff, incl. security rules)
+        run: |
+          ruff check backend examples/notes/backend
+          ruff format --check backend
+      - name: Static security analysis (bandit, medium and high)
+        run: bandit -r backend/swf -c backend/pyproject.toml -ll
+      - name: Framework tests
+        run: pytest backend
+      - name: Example app tests
+        run: pytest examples/notes/backend
+
+  backend-postgres:
+    name: Back end (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install -e "backend[dev]" -e examples/notes/backend
+      - name: Framework tests on PostgreSQL (migrations, append-only triggers)
+        run: pytest backend
+      - name: Example app tests on PostgreSQL
+        run: pytest examples/notes/backend
+
+  frontend:
+    name: Front end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build @swf/web (type check + library build)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build the example app against it
+        working-directory: examples/notes/frontend
+        run: |
+          npm ci
+          npm run build
+
+  dependency-audit:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: pip-audit
+        run: |
+          pip install -e "backend[dev]"
+          pip-audit --skip-editable
+      - name: npm audit (high and critical)
+        run: |
+          (cd frontend && npm ci && npm audit --audit-level=high)
+          (cd examples/notes/frontend && npm ci && npm audit --audit-level=high)
+
+  docker:
+    name: Docker stack with HTTPS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure a throwaway stack on localhost
+        working-directory: deploy
+        run: |
+          {
+            echo "APP_DOMAIN=localhost"
+            echo "ACME_EMAIL=ci@example.com"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
+            echo "MASTER_KEY=$(openssl rand -base64 32 | tr '+/' '-_')"
+          } > .env
+      - name: docker compose up
+        working-directory: deploy
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: The app answers over HTTPS with security headers
+        run: |
+          for i in $(seq 1 30); do curl -fsk https://localhost/api/health && break; sleep 2; done
+          curl -fsk https://localhost/api/health | grep -q '"ok"'
+          curl -fsk https://localhost/api/config | grep -q '"app_name":"Notes"'
+          curl -sk -D - -o /dev/null https://localhost/ | grep -qi '^strict-transport-security'
+          curl -sk -D - -o /dev/null https://localhost/api/health | grep -qi '^x-frame-options: DENY'
+      - name: Logs
+        if: failure()
+        working-directory: deploy
+        run: docker compose logs
+      - name: Clean up
+        if: always()
+        working-directory: deploy
+        run: docker compose down -v

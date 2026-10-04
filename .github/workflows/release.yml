@@ -1,0 +1,74 @@
+name: Release
+
+# Pushing a tag like v0.1.0 runs every CI check, builds the packages and publishes a GitHub Release.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Versions must match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          py=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' backend/swf/__init__.py)
+          js=$(node -p "require('./frontend/package.json').version")
+          echo "tag=$tag python=$py npm=$js"
+          test "$tag" = "$py"
+          test "$tag" = "$js"
+          grep -qF "## [$tag]" CHANGELOG.md
+      - name: Build Python wheel and sdist
+        run: |
+          pip install build
+          python -m build backend --outdir out
+      - name: Build and pack @swf/web
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npm pack --pack-destination ../out
+      - name: Checksums and release notes
+        run: |
+          (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          tag="${GITHUB_REF_NAME#v}"
+          awk -v t="## [$tag]" 'index($0, t) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md > out/RELEASE_NOTES.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: out/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: out
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Secure Web App Framework $GITHUB_REF_NAME" \
+            --notes-file out/RELEASE_NOTES.md \
+            out/*.whl out/*.tar.gz out/*.tgz out/SHA256SUMS.txt
