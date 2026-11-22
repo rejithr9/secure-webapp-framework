@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@swf/web": "file:../../../frontend",
-    "react": "^19.0.0",
+    "react": "^19.3.1",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0"
   },
